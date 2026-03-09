@@ -1,7 +1,7 @@
 services:
   kinova_diffusion:
-    container_name: kinova_diffusion
-    working_dir: /home/user/kinova_diffusion
+    container_name: kinova-diffusion
+    working_dir: /home/user/kinova-diffusion
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,7 +14,7 @@ services:
     devices:
       - /dev:/dev 
     volumes:
-      - ../kinova_diffusion:/home/user/kinova_diffusion
+      - ../kinova_diffusion:/home/user/kinova-diffusion
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /dev/bus/usb:/dev/bus/usb
 
