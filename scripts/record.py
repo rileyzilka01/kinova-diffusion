@@ -1,6 +1,7 @@
 import libtmux
 import time
 from os import path
+import sys
 
 dataset_name = "hitl_tennis_ball"
 
@@ -8,6 +9,7 @@ if __name__ == "__main__":
 	server = libtmux.Server(
 		config_file=path.expandvars("/home/user/png_vision/scripts/.tmux.conf")
 	)
+	dataset_name = sys.argv[1]
 	if server.has_session("sim"):
 		exit()
 	else:
