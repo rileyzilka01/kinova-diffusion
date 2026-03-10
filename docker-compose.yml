@@ -14,7 +14,7 @@ services:
     devices:
       - /dev:/dev 
     volumes:
-      - ../kinova_diffusion:/home/user/kinova-diffusion
+      - ../kinova-diffusion:/home/user/kinova-diffusion
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /dev/bus/usb:/dev/bus/usb
 
