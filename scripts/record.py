@@ -7,13 +7,13 @@ dataset_name = "hitl_tennis_ball"
 
 if __name__ == "__main__":
 	server = libtmux.Server(
-		config_file=path.expandvars("/home/user/png_vision/scripts/.tmux.conf")
+		config_file=path.expandvars("/home/user/kinova-diffusion/scripts/.tmux.conf")
 	)
 	dataset_name = sys.argv[1]
 	if server.has_session("sim"):
 		exit()
 	else:
-		session = server.new_session("sim", start_directory="/home/user/png_vision", attach=False)
+		session = server.new_session("sim", start_directory="/home/user/kinova-diffusion", attach=False)
 		
 	# terminals for the simulation to start
 	terminals = {
@@ -23,7 +23,7 @@ if __name__ == "__main__":
 		"segment": "rosrun kortex_bringup segment.py", 
 		"realsense_back": "sleep 5 && roslaunch realsense2_camera rs_camera.launch camera:=cam filters:=pointcloud depth_width:=640 depth_height:=480 depth_fps:=30 color_width:=640 color_height:=480 color_fps:=30 align_depth:=true decimation_filter:=true spatial_filter:=true temporal_filter:=true hole_filling_filter:=true",
 		"record": f"sleep 1 && rosrun kortex_bringup record.py {dataset_name}",
-		"rviz": "sleep 5 &&rviz -d /home/user/png_vision/scripts/segment.rviz",
+		"rviz": "sleep 5 &&rviz -d /home/user/kinova-diffusion/scripts/segment.rviz",
 	}
 
 	for name, cmd in terminals.items():
