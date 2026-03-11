@@ -1,11 +1,16 @@
 import libtmux
 import time
 from os import path
+import sys
 
 if __name__ == "__main__":
 	server = libtmux.Server(
 		config_file=path.expandvars("/home/user/kinova-diffusion/scripts/.tmux.conf")
 	)
+	local = sys.argv[1]
+	if local not in ["0", "1"]:
+		print("local must be 0 or 1")
+		exit(1)
 	if server.has_session("sim"):
 		exit()
 	else:
@@ -18,7 +23,7 @@ if __name__ == "__main__":
 		"joy": "rosrun joy joy_node", 
 		"segment": "rosrun kortex_bringup segment.py", 
 		"realsense_back": "sleep 5 && roslaunch realsense2_camera rs_camera.launch camera:=cam filters:=pointcloud depth_width:=640 depth_height:=480 depth_fps:=30 color_width:=640 color_height:=480 color_fps:=30 align_depth:=true decimation_filter:=true spatial_filter:=true temporal_filter:=true hole_filling_filter:=true",
-		"inference": f"sleep 1 && rosrun kortex_bringup inference.py",
+		"inference": f"sleep 1 && rosrun kortex_bringup inference.py {local}",
 		"rviz": "sleep 5 &&rviz -d /home/user/kinova-diffusion/scripts/segment.rviz",
 	}
 

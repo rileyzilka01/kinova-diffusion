@@ -27,16 +27,20 @@ msgpack_numpy_decode = msgpack_numpy.decode
 
 
 class RobotInferenceNode:
-    def __init__(self):
+    def __init__(self, local):
         rospy.init_node("robot_inference_node")
 
         # ZeroMQ setup
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("tcp://192.168.1.161:5555")
+        if not local:
+            self.socket.connect("tcp://localhost:5555")
+        else:
+            self.socket.connect("tcp://192.168.1.161:5555")
+
         self.socket.setsockopt(zmq.RCVTIMEO, 1000)
 
-        self.socket.setsockopt(zmq.RCVTIMEO, 2000)  # 2s timeout
+        self.socket.setsockopt(zmq.RCVTIMEO, -1)  # indefinite timeout
         self.socket.setsockopt(zmq.LINGER, 0)       # Don't hang on close if server is dead
 
         self.pointclouds = []
@@ -217,8 +221,14 @@ class RobotInferenceNode:
         rospy.loginfo(f"Sending and publishing took {sending_time:.6f} seconds")
 
 if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python record.py <local_server>")
+        sys.exit(1)
+    if sys.argv[1] not in ["0", "1"]:
+        print("local_server must be 0 or 1")
+        sys.exit(1)
     try:
-        node = RobotInferenceNode()
+        node = RobotInferenceNode(local=0 if sys.argv[1] == "0" else 1)
         rospy.spin()
     except KeyboardInterrupt:
         rospy.loginfo("Shutting down...")
