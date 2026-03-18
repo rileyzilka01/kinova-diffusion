@@ -40,13 +40,15 @@ class ImageSegmentationNode:
         self.busy = False
         self.mask_arrays = []
         self.merged_mask = None
-        self.centroids = []
         self.fx = 0
         self.fy = 0
         self.cx = 0
         self.cy = 0
 
         self.prompts = [["robot arm", "black object"], "yellow object", "cup"]
+
+        self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
+        self.masks = [[None] for prompt in self.prompts]
 
         # Send a ping test message
         try:
@@ -80,9 +82,10 @@ class ImageSegmentationNode:
         self.K = K
         self.camera_info_received = True
 
+
     def pc_callback(self, pc_msg):
-        if self.merged_mask is None or self.fx == 0:
-            return  # wait for mask image
+        if self.fx == 0:
+            return
 
         # 1 — convert PointCloud2 → XYZ NumPy
         xyz, rgb_stacked = self.pc2_to_xyz_ros_numpy(pc_msg)
@@ -94,39 +97,107 @@ class ImageSegmentationNode:
             [0,        0,          1]
         ], dtype=np.float32)
 
-        # 3 — mask the point cloud and rgb
-        masked_xyz, masked_rgb = self.mask_pointcloud_with_mask(xyz, rgb_stacked, self.merged_mask, K)
+        new_centroids = []
+        selected_masks = []
 
-        # 4 — convert back to PointCloud2
-        masked_pc_msg = self.xyz_rgb_to_pc2(masked_xyz, masked_rgb, frame_id=pc_msg.header.frame_id)
+        # --- 3A — End Effector (prompt 0) ---
+        ee_mask = self.masks[0][0]  # guaranteed to exist
 
-        # 5 — publish
+        if ee_mask is None or len(ee_mask) == 0:
+            ee_centroid = np.array(self.centroids[0])
+            selected_masks.append(None)
+        else:
+            ee_xyz = self.mask_pointcloud_with_mask(xyz, None, ee_mask, K)
+
+            if ee_xyz.shape[0] == 0:
+                ee_centroid = np.array(self.centroids[0])
+                selected_masks.append(None)
+            else:
+                ee_centroid = np.mean(ee_xyz, axis=0)
+                selected_masks.append(ee_mask)
+
+        new_centroids.append(ee_centroid)
+
+        # --- 3B — Other prompts ---
+        i = 1
+        for prompt_masks in self.masks[1:]:
+            if prompt_masks is None or len(prompt_masks) == 0:
+                new_centroids.append(self.centroids[i])
+                selected_masks.append(None)
+                continue
+
+            best_mask = None
+            best_centroid = None
+            best_dist = float("inf")
+
+            for mask in prompt_masks:
+                masked_xyz = self.mask_pointcloud_with_mask(xyz, None, mask, K)
+
+                if masked_xyz.shape[0] == 0:
+                    continue
+
+                centroid = np.mean(masked_xyz, axis=0)
+
+                dist = np.linalg.norm(centroid - ee_centroid)
+
+                if dist < best_dist:
+                    best_dist = dist
+                    best_mask = mask
+                    best_centroid = centroid
+
+            if best_mask is None:
+                new_centroids.append(self.centroids[i])
+                selected_masks.append(None)
+            else:
+                new_centroids.append(best_centroid)
+                selected_masks.append(best_mask)
+            
+            i += 1
+
+        self.centroids = new_centroids
+
+        # --- 4 — Merge selected masks ---
+        merged_mask = None
+        for i, mask in enumerate(selected_masks):
+            if mask is None:
+                continue
+
+            if merged_mask is None:
+                merged_mask = mask.copy()
+            else:
+                merged_mask = np.logical_or(merged_mask, mask)
+
+        if merged_mask is None:
+            # no valid masks at all → empty point cloud
+            return
+        else:
+            merged_mask = merged_mask.astype(np.uint8)
+
+            ros_image_msg = self.bridge.cv2_to_imgmsg((merged_mask * 255).astype(np.uint8), encoding="mono8")
+            self.seg_pub.publish(ros_image_msg)
+
+            # 5 — mask point cloud
+            masked_xyz, masked_rgb = self.mask_pointcloud_with_mask(
+                xyz, rgb_stacked, merged_mask, K
+            )
+
+        # 6 — convert back to PointCloud2
+        masked_pc_msg = self.xyz_rgb_to_pc2(
+            masked_xyz, masked_rgb, frame_id=pc_msg.header.frame_id
+        )
+
+        # 7 — publish masked cloud
         self.seg_point_pub.publish(masked_pc_msg)
 
-        # rospy.loginfo("Published masked point cloud with %d points", masked_xyz.shape[0])
-
-        # 6 - get the centroids
-        self.centroids = []
-        # rospy.loginfo(f"Len of masked arrays: {len(self.mask_arrays)}")
-        for i in self.mask_arrays:
-            if i is None: 
-                self.centroids.append([0, 0, 0])
-            else:
-                masked_xyz = self.mask_pointcloud_with_mask(xyz, None, i, K)
-                if masked_xyz.shape[0] == 0:
-                    rospy.loginfo("No points found for this mask")
-                    continue
-                centroid = np.mean(masked_xyz, axis=0)
-                self.centroids.append(centroid)
-                # rospy.loginfo(f"Centroid of masked points: x={centroid[0]:.3f}, y={centroid[1]:.3f}, z={centroid[2]:.3f}")
+        # 8 — publish centroids
         msg = Float32MultiArrayStamped()
         msg.data = np.array(self.centroids).flatten().tolist()
         msg.header.stamp = rospy.Time.now()
         self.centroids_pub.publish(msg)
 
+    
     def callback(self, img_msg):
         self.img = img_msg
-        # rospy.loginfo("Received image")
 
     def process_image(self):
         if self.img is None:
@@ -155,35 +226,37 @@ class ImageSegmentationNode:
 
             reply_parts = self.socket.recv_multipart()
             reply_header = json.loads(reply_parts[0].decode("utf-8"))
-            mask_bytes = reply_parts[1]
 
-            # rospy.loginfo(f"Server reply header: {reply_header}")
+            part_idx = 1  # starts after header
 
-            tmp = []
-            merged_mask = None
-            self.mask_arrays = []
-            for i, prompt in enumerate(reply_header.keys()):
-                if reply_header[prompt]["height"] != 0:
-                    mask_bytes = reply_parts[i+1]
+            self.masks = []
 
-                    # rospy.loginfo(f"Mask bytes length: {len(mask_bytes)}")
+            if len(reply_header.keys()) == 0:
+                rospy.loginfo("Reply header length 0")
+                for prompt in self.prompts:
+                    self.masks.append(None)
 
-                    mask_array = np.frombuffer(mask_bytes, dtype=np.uint8)  # or dtype=header['dtype']
-                    mask_array = mask_array.reshape(header['height'], header['width'])
+            for prompt in reply_header.keys():
+                prompt_masks_meta = reply_header[prompt]
 
-                    if merged_mask is None:
-                        merged_mask = mask_array.copy()
-                    else:
-                        merged_mask = np.logical_or(merged_mask, mask_array).astype(np.uint8)
-                
-                    self.mask_arrays.append((mask_array * 255).astype(np.uint8))
-                else:
-                    self.mask_arrays.append(None)
+                # No masks returned for this prompt
+                if len(prompt_masks_meta) == 0:
+                    rospy.loginfo(f"No mask for prompt {prompt}")
+                    self.masks.append(None)
+                    continue
 
-            self.merged_mask = (merged_mask * 255).astype(np.uint8)
-            ros_image_msg = self.bridge.cv2_to_imgmsg(self.merged_mask, encoding="mono8")
-            self.seg_pub.publish(ros_image_msg)
+                prompt_masks = []
 
+                for meta in prompt_masks_meta:
+                    mask_bytes = reply_parts[part_idx]
+                    part_idx += 1  # move to next part for next mask
+
+                    mask_array = np.frombuffer(mask_bytes, dtype=np.uint8)
+                    mask_array = mask_array.reshape(meta["height"], meta["width"])
+
+                    prompt_masks.append((mask_array * 255).astype(np.uint8))
+
+                self.masks.append(prompt_masks)
            
             self.busy = False
 
