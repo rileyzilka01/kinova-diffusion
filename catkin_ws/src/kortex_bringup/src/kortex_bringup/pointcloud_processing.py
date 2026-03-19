@@ -6,7 +6,7 @@ import time
 import torch
 import pytorch3d.ops as torch3d_ops
 
-pc_points = 2048
+pc_points = 512
 
 def farthest_point_sampling(points, num_points=1024, use_cuda=True):
     # Expect points as numpy array [N, 4], xyz+rgb
@@ -162,7 +162,7 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, segment=True):
         points_combined = np.hstack([xyz, rgb])
 
     # Run farthest point sampling (using xyz only)
-    sampled = vfps(xyz, num_points, use_cuda=use_cuda, color=color) # return: (points, indices) if color else (points)
+    sampled = vfps(xyz, num_points=num_points, use_cuda=use_cuda, color=color) # return: (points, indices) if color else (points)
     points_xyz = sampled[0]
 
     # Adjust offsets if orientation enabled

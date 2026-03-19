@@ -234,7 +234,7 @@ class ImageSegmentationNode:
             if len(reply_header.keys()) == 0:
                 rospy.loginfo("Reply header length 0")
                 for prompt in self.prompts:
-                    self.masks.append(None)
+                    self.masks.append([None])
 
             for prompt in reply_header.keys():
                 prompt_masks_meta = reply_header[prompt]
@@ -242,7 +242,7 @@ class ImageSegmentationNode:
                 # No masks returned for this prompt
                 if len(prompt_masks_meta) == 0:
                     rospy.loginfo(f"No mask for prompt {prompt}")
-                    self.masks.append(None)
+                    self.masks.append([None])
                     continue
 
                 prompt_masks = []
