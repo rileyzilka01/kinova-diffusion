@@ -6,7 +6,7 @@ import time
 import torch
 import pytorch3d.ops as torch3d_ops
 
-pc_points = 512
+pc_points = 1024
 
 def farthest_point_sampling(points, num_points=1024, use_cuda=True):
     # Expect points as numpy array [N, 4], xyz+rgb

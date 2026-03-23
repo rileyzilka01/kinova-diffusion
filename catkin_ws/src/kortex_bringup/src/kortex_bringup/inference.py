@@ -17,6 +17,9 @@ from kortex_driver.msg._BaseCyclic_Feedback import BaseCyclic_Feedback
 
 import time
 import math
+import cv2
+
+from kinova_util import KinovaUtil
 
 from pointcloud_processing import preprocess_point_cloud
 
@@ -43,6 +46,8 @@ class RobotInferenceNode:
         self.socket.setsockopt(zmq.RCVTIMEO, -1)  # indefinite timeout
         self.socket.setsockopt(zmq.LINGER, 0)       # Don't hang on close if server is dead
 
+        self.ku = KinovaUtil()
+
         self.pointclouds = []
         self.states = []
 
@@ -50,8 +55,9 @@ class RobotInferenceNode:
         self.n_obs = 1
 
         self.shared = True
-        self.num_prompts = 3
+        self.num_prompts = 4
         self.centroid_only = True
+        self.use_norm_diffs = True
 
         self.use_pointcloud = True
         self.center_point_cloud = True
@@ -109,7 +115,25 @@ class RobotInferenceNode:
         # self.callback(None, None)
 
     def tool_callback(self, msg):
-        self.tooldata = [msg.base.tool_pose_x, msg.base.tool_pose_y, msg.base.tool_pose_z]
+        if self.ku.get_eef_pose() is not None:
+            rads = self.ku.get_eef_pose()[3:]
+            self.tooldata = [
+                msg.base.tool_pose_x, 
+                msg.base.tool_pose_y, 
+                msg.base.tool_pose_z, 
+                rads[0],
+                rads[1],
+                rads[2],
+            ]
+        else:
+            self.tooldata = [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ]
 
     def nopc_callback(self, centroids_msg, joint_msg):
         try:
@@ -178,13 +202,38 @@ class RobotInferenceNode:
         if len(centroids) == 0:
             centroids = [0] * 3 * self.num_prompts
         differences = []
-        for i in range(self.num_prompts):
+        for i in range(1, self.num_prompts): #skip the red ring
             for j in range(i+1, self.num_prompts):
                 differences += [centroids[i*3] - centroids[j*3], centroids[(i*3)+1] - centroids[(j*3)+1], centroids[(i*3)+2] - centroids[(j*3)+2]]
         agent_pos += differences
 
-        if self.centroid_only:
-            agent_pos = agent_pos[-9:]
+        if self.use_norm_diffs:
+            ee_vec = np.array(centroids[:3]) - np.array(centroids[3:6])
+            mag = np.linalg.norm(ee_vec)
+            if mag > 1e-6:
+                ee_unit_vec = ee_vec / mag
+            else:
+                ee_unit_vec = ee_vec
+            
+            norm_diffs = []
+            for i in range(self.num_prompts-2):
+                raw_target_dist = np.array(differences[i*3:(i+1)*3])
+
+                mag = np.linalg.norm(raw_target_dist)
+                if mag > 1e-6:
+                    target_vec = raw_target_dist / mag
+                else:
+                    target_vec = raw_target_dist
+            
+                diff = self.unit_vector_diff(ee_unit_vec, target_vec)
+                norm_diffs.append(diff)
+
+            agent_pos += norm_diffs
+
+        if self.centroid_only and self.use_norm_diffs:
+            agent_pos = agent_pos[-(3*(self.num_prompts-1)) - ((self.num_prompts-1)-1):]
+        elif self.centroid_only:
+            agent_pos = agent_pos[-(3*(self.num_prompts-1)):]
 
         return agent_pos
 
@@ -219,6 +268,14 @@ class RobotInferenceNode:
         end_time = time.time()
         sending_time = end_time - start_time
         rospy.loginfo(f"Sending and publishing took {sending_time:.6f} seconds")
+
+    def unit_vector_diff(self, a, b, eps=1e-8):
+        # Normalize to unit vectors
+        a_unit = a / (np.linalg.norm(a) + eps)
+        b_unit = b / (np.linalg.norm(b) + eps)
+        
+        # Return the L2 distance between the tips of the vectors
+        return np.linalg.norm(a_unit - b_unit, axis=-1)
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:

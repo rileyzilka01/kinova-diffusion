@@ -45,7 +45,7 @@ class ImageSegmentationNode:
         self.cx = 0
         self.cy = 0
 
-        self.prompts = [["robot arm", "black object"], "yellow object", "cup"]
+        self.prompts = [["robot arm", "red object"], ["robot arm", "black object"], "yellow object", "plate"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
         self.masks = [[None] for prompt in self.prompts]
@@ -100,8 +100,28 @@ class ImageSegmentationNode:
         new_centroids = []
         selected_masks = []
 
+        # Red ring
+        ring_mask = self.masks[0][0]  # guaranteed to exist
+
+        if ring_mask is None or len(ring_mask) == 0:
+            ring_centroid = np.array(self.centroids[0])
+            selected_masks.append(None)
+        else:
+            ring_xyz = self.mask_pointcloud_with_mask(xyz, None, ring_mask, K)
+
+            if ring_xyz.shape[0] == 0:
+                ring_centroid = np.array(self.centroids[0])
+                selected_masks.append(None)
+            else:
+                ring_centroid = np.mean(ring_xyz, axis=0)
+                selected_masks.append(ring_mask)
+
+        new_centroids.append(ring_centroid)
+
+
+
         # --- 3A — End Effector (prompt 0) ---
-        ee_mask = self.masks[0][0]  # guaranteed to exist
+        ee_mask = self.masks[1][0]  # guaranteed to exist
 
         if ee_mask is None or len(ee_mask) == 0:
             ee_centroid = np.array(self.centroids[0])
@@ -119,8 +139,8 @@ class ImageSegmentationNode:
         new_centroids.append(ee_centroid)
 
         # --- 3B — Other prompts ---
-        i = 1
-        for prompt_masks in self.masks[1:]:
+        i = 2
+        for prompt_masks in self.masks[2:]:
             if prompt_masks is None or len(prompt_masks) == 0:
                 new_centroids.append(self.centroids[i])
                 selected_masks.append(None)
@@ -131,6 +151,9 @@ class ImageSegmentationNode:
             best_dist = float("inf")
 
             for mask in prompt_masks:
+                if mask is None:
+                    continue
+
                 masked_xyz = self.mask_pointcloud_with_mask(xyz, None, mask, K)
 
                 if masked_xyz.shape[0] == 0:
