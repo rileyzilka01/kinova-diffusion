@@ -125,27 +125,27 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd"):
 
     # Crop points by workspace mask in a vectorized manner
     # Dont need to crop if segmentation
-    if model == "hitl_d":
-        if orientation: # Need to tune this by first recording an episode and then visualizing it and then hand finding a cropped region
-            WORK_SPACE = [
-                [-0.4, 0.4],
-                [-1.1, 1],
-                [-0.4, 1]
-            ]
+    # if model == "hitl_d":
+    #     if orientation: # Need to tune this by first recording an episode and then visualizing it and then hand finding a cropped region
+    #         WORK_SPACE = [
+    #             [-0.4, 0.4],
+    #             [-1.1, 1],
+    #             [-0.4, 1]
+    #         ]
 
-        else:
-            WORK_SPACE = [
-                [-0.6, 0.3],
-                [-0.4, 0.5],
-                [0.2, 1]
-            ]
+    #     else:
+    #         WORK_SPACE = [
+    #             [-0.6, 0.3],
+    #             [-0.4, 0.5],
+    #             [0.2, 1]
+    #         ]
 
-        mask = (
-            (xyz[:, 0] > WORK_SPACE[0][0]) & (xyz[:, 0] < WORK_SPACE[0][1]) &
-            (xyz[:, 1] > WORK_SPACE[1][0]) & (xyz[:, 1] < WORK_SPACE[1][1]) &
-            (xyz[:, 2] > WORK_SPACE[2][0]) & (xyz[:, 2] < WORK_SPACE[2][1])
-        )
-        xyz = xyz[mask]
+    #     mask = (
+    #         (xyz[:, 0] > WORK_SPACE[0][0]) & (xyz[:, 0] < WORK_SPACE[0][1]) &
+    #         (xyz[:, 1] > WORK_SPACE[1][0]) & (xyz[:, 1] < WORK_SPACE[1][1]) &
+    #         (xyz[:, 2] > WORK_SPACE[2][0]) & (xyz[:, 2] < WORK_SPACE[2][1])
+    #     )
+    #     xyz = xyz[mask]
     if xyz.shape[0] == 0:
         raise ValueError("No points after cropping.")
 
