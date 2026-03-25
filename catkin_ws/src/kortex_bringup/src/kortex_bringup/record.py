@@ -33,9 +33,11 @@ from pointcloud_processing import preprocess_point_cloud
 bridge = CvBridge()
 
 class Recorder(png_control):
-    def __init__(self, dataset):
+    def __init__(self, model, dataset):
         super(Recorder, self).__init__(None)
         rospy.init_node('record_py')
+
+        self.model = model
 
         self.ku = KinovaUtil()
 
@@ -53,23 +55,25 @@ class Recorder(png_control):
         ]
         self.episode_num = max(existing) + 1 if existing else 0
 
+        if self.model == "hitl_hgd":
+            pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
+            centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
+        
         joints_sub = message_filters.Subscriber('/my_gen3/joint_states', JointState)
         depth_sub = message_filters.Subscriber('/cam/depth/color/points', PointCloud2)
-        pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
-        centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
         self.joy_sub = rospy.Subscriber("/joy", Joy, self.joy_callback)
 
-        ts = message_filters.ApproximateTimeSynchronizer([joints_sub, pc_segment_sub, centroids_sub], 100, slop=10)
-        ts.registerCallback(self.syncCallback)
+        if self.model == "hitl_hgd":
+            ts = message_filters.ApproximateTimeSynchronizer([joints_sub, pc_segment_sub, centroids_sub], 100, slop=10)
+            ts.registerCallback(self.syncCallbackHITLHGD)
+        elif self.model == "hitl_d":
+            ts = message_filters.ApproximateTimeSynchronizer([joints_sub, depth_sub], 100, slop=10)
+            ts.registerCallback(self.syncCallbackHITLD)
 
         # desyncing check setup
         self.last_sync_time = rospy.Time.now()
         self.sync_timeout = rospy.Duration(1.0)
         rospy.Timer(rospy.Duration(0.5), self.checkDesync)
-
-        # self.home_array = np.array([0.1, 65, -179.9, -120, 0, 100, -90])
-        # self._call_clear_faults()
-        # self.send_joint_angles(self.home_array)
 
         self.last_press = 'end'
         self.stage = 1
@@ -103,20 +107,14 @@ class Recorder(png_control):
                 0,
             ]
 
-    def syncCallback(self, joint_msg, depth, centroid_msg):
-        # it is possible something breaks and we become desynced, dont want to record episode in this case
+    def syncCallbackHITLHGD(self, joint_msg, depth, centroid_msg):
         self.last_sync_time = rospy.Time.now()
-
-        # rospy.loginfo(f"joints: {joints.header.stamp.to_sec()}")
-        # rospy.loginfo(f"pc_segment: {pc_segment.header.stamp.to_sec()}")
-        # rospy.loginfo(f"centroids: {centroids.header.stamp.to_sec()}")
 
         # havent started yet
         if not hasattr(self, "curr_low_dim"):
             return
        
         try:
-            # numpy_pc = np.column_stack([ros_numpy.numpify(depth)[f] for f in ("x", "y", "z", "rgb")])
             self.curr_depth.append(depth)
 
             data = {
@@ -127,6 +125,29 @@ class Recorder(png_control):
                 "ee_position": self.tooldata[:3],
                 "ee_orientation": self.tooldata[3:],
                 "centroids": centroid_msg.data
+            }
+            
+            self.curr_low_dim.append(data)
+        except Exception as e:
+            rospy.logerr("error in sync: %s", e)
+
+    def syncCallbackHITLD(self, joint_msg, depth):
+        self.last_sync_time = rospy.Time.now()
+
+        # havent started yet
+        if not hasattr(self, "curr_low_dim"):
+            return
+       
+        try:
+            self.curr_depth.append(depth)
+
+            data = {
+                'joints': {
+                    'position': joint_msg.position,
+                    'velocity': joint_msg.velocity,
+                },
+                "ee_position": self.tooldata[:3],
+                "ee_orientation": self.tooldata[3:]
             }
             
             self.curr_low_dim.append(data)
@@ -169,15 +190,19 @@ class Recorder(png_control):
         current_folder = os.path.join(self.base_path, str(self.episode_num))
         os.makedirs(current_folder)
 
-        indexes = self.select_evenly_spaced([i for i in range(len(self.curr_low_dim))], max_length=1024)
+        indexes = self.select_evenly_spaced([i for i in range(len(self.curr_low_dim))], max_length=1024 if self.model == "hitl_hgd" else 256)
 
         for i, idx in enumerate(tqdm(indexes)):
             # save each frame
             frame_folder = os.path.join(current_folder, str(i))
             os.makedirs(frame_folder)
             np.save(os.path.join(frame_folder, "low_dim.npy"), self.curr_low_dim[idx])
-            # np.save(os.path.join(frame_folder, "depth.npy"), self.curr_depth[idx])
-            np.save(os.path.join(frame_folder, "depth.npy"), preprocess_point_cloud(self.curr_depth[idx], color=False))
+
+            pointcloud = preprocess_point_cloud(self.curr_depth[idx], color=False, model=self.model)
+            centroid = pointcloud.mean(axis=0)
+            pointcloud = pointcloud - centroid
+
+            np.save(os.path.join(frame_folder, "depth.npy"), pointcloud)
 
         rospy.loginfo(f"Finished saving episode {self.episode_num}")
         self.episode_num += 1
@@ -191,12 +216,16 @@ class Recorder(png_control):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python record.py <dataset_name>")
+    if len(sys.argv) < 3:
+        print("Usage: python record.py <model> <dataset_name>")
         sys.exit(1)
 
-    dataset = sys.argv[1]
+    model = sys.argv[1]
+    if model not in ["hitl_d", "hitl_hgd"]:
+        print("Model does not exist please use <hitl_d, hitl_hgd>")
 
-    recorder = Recorder(dataset)
+    dataset = sys.argv[2]
+
+    recorder = Recorder(model, dataset)
 
     rospy.spin()

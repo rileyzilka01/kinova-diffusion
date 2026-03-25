@@ -30,8 +30,10 @@ msgpack_numpy_decode = msgpack_numpy.decode
 
 
 class RobotInferenceNode:
-    def __init__(self, local):
+    def __init__(self, model, local):
         rospy.init_node("robot_inference_node")
+
+        self.model = model
 
         # ZeroMQ setup
         self.context = zmq.Context()
@@ -56,11 +58,18 @@ class RobotInferenceNode:
 
         self.shared = True
         self.num_prompts = 4
-        self.centroid_only = True
-        self.use_norm_diffs = True
 
         self.use_pointcloud = True
-        self.center_point_cloud = True
+
+        if self.model == "hitl_hgd":
+            self.use_centroids = True
+            self.use_norm_diffs = True
+            self.use_ee_position = False
+        else:
+            self.use_centroids = False
+            self.use_norm_diffs = False
+            self.use_ee_position = True
+
 
         if self.shared:
             # SHARED
@@ -95,18 +104,20 @@ class RobotInferenceNode:
             sys.exit(1)
 
         # ROS publishers and subscribers
-        self.pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
-        self.centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
-        self.cam_sub = message_filters.Subscriber("/cam/depth/color/points", PointCloud2)
+        if self.model == "hitl_hgd":
+            self.pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
+            self.centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
+
+        self.depth_sub = message_filters.Subscriber("/cam/depth/color/points", PointCloud2)
         self.joint_sub = message_filters.Subscriber("/my_gen3/joint_states", JointState)
         self.tool_sub = rospy.Subscriber("/my_gen3/base_feedback", BaseCyclic_Feedback, self.tool_callback)
 
-        if self.use_pointcloud:
+        if self.model == "hitl_hgd":
             self.ts = message_filters.ApproximateTimeSynchronizer([self.pc_segment_sub, self.centroids_sub, self.joint_sub], queue_size=5, slop=0.1)
-            self.ts.registerCallback(self.callback)
+            self.ts.registerCallback(self.callbackHITLHGD)
         else:
-            self.ts = message_filters.ApproximateTimeSynchronizer([self.centroids_sub, self.joint_sub], queue_size=5, slop=0.1)
-            self.ts.registerCallback(self.nopc_callback)
+            self.ts = message_filters.ApproximateTimeSynchronizer([self.depth_sub, self.joint_sub], queue_size=5, slop=0.1)
+            self.ts.registerCallback(self.callbackHITLD)
 
         self.cmd_pub = rospy.Publisher("/my_gen3/inference", Float64MultiArray, queue_size=10)
 
@@ -135,34 +146,50 @@ class RobotInferenceNode:
                 0,
             ]
 
-    def nopc_callback(self, centroids_msg, joint_msg):
+    def callbackHITLHGD(self, pc_msg, centroids_msg, joint_msg):
         try:
+            # Convert PointCloud2 to numpy array [N, 3]
+            start_time = time.time()
+            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False)
+
+            centroid = pointcloud.mean(axis=0)
+            pointcloud = pointcloud - centroid
+
+            end_time = time.time()
+            process_time = end_time - start_time
+            rospy.loginfo(f"Processing pointcloud took {process_time:.6f} seconds")
+            
             agent_pos = self.get_state_array(centroids_msg, joint_msg)
 
-            if len(self.states) != self.n_obs:
+            if len(self.pointclouds) != self.n_obs:
+                self.pointclouds.append(pointcloud.astype(np.float16))  # keep as NumPy
                 self.states.append(np.array(agent_pos, dtype=np.float16))
-            if len(self.states) == self.n_obs:
+            if len(self.pointclouds) == self.n_obs:
                 start_time = time.time()
                 rospy.loginfo("Sending data to server")
                 payload = {
                     "agent_pos": np.array(self.states, dtype=np.float32),
+                    "point_cloud": np.array(self.pointclouds, dtype=np.float32)
                 }
                 
                 self.send_payload_and_publish(payload)
 
+                self.pointclouds.clear()
                 self.states.clear()
 
         except Exception as e:
             rospy.logerr(f"Error in callback: {str(e)}")
 
-    def callback(self, pc_msg, centroids_msg, joint_msg):
+
+    def callbackHITLD(self, pc_msg, joint_msg):
         try:
             # Convert PointCloud2 to numpy array [N, 3]
             start_time = time.time()
-            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False)
-            if self.center_point_cloud:
-                centroid = pointcloud.mean(axis=0)
-                pointcloud = pointcloud - centroid
+
+            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False, model=self.model)=
+            centroid = pointcloud.mean(axis=0)
+            pointcloud = pointcloud - centroid
+
             end_time = time.time()
             process_time = end_time - start_time
             rospy.loginfo(f"Processing pointcloud took {process_time:.6f} seconds")
@@ -190,53 +217,61 @@ class RobotInferenceNode:
 
 
     def get_state_array(self, centroids_msg, joint_msg):
-        if self.use_gripper:
-            agent_pos = list(joint_msg.position[:8]) + list(self.tooldata)
-        else:
-            agent_pos = list(joint_msg.position[:7]) + list(self.tooldata)
-
         if not self.joint_pos:
             agent_pos = agent_pos[7:]
 
-        centroids = list(centroids_msg.data)
-        if len(centroids) == 0:
-            centroids = [0] * 3 * self.num_prompts
         differences = []
-        for i in range(1, self.num_prompts): #skip the red ring
-            for j in range(i+1, self.num_prompts):
-                differences += [centroids[i*3] - centroids[j*3], centroids[(i*3)+1] - centroids[(j*3)+1], centroids[(i*3)+2] - centroids[(j*3)+2]]
-        agent_pos += differences
+        if self.use_centroids:
+            centroids = list(centroids_msg.data)
+            if len(centroids) == 0:
+                centroids = [0] * 3 * self.num_prompts
+            
+            for i in range(1, self.num_prompts): #skip the red ring
+                for j in range(i+1, self.num_prompts):
+                    differences += [centroids[i*3] - centroids[j*3], centroids[(i*3)+1] - centroids[(j*3)+1], centroids[(i*3)+2] - centroids[(j*3)+2]]
 
+        norm_diffs = []
         if self.use_norm_diffs:
             ee_vec = np.array(centroids[:3]) - np.array(centroids[3:6])
-            mag = np.linalg.norm(ee_vec)
-            if mag > 1e-6:
-                ee_unit_vec = ee_vec / mag
-            else:
-                ee_unit_vec = ee_vec
+            ee_unit_vec = self.normalize(ee_vec)
             
-            norm_diffs = []
             for i in range(self.num_prompts-2):
                 raw_target_dist = np.array(differences[i*3:(i+1)*3])
-
-                mag = np.linalg.norm(raw_target_dist)
-                if mag > 1e-6:
-                    target_vec = raw_target_dist / mag
-                else:
-                    target_vec = raw_target_dist
+                target_vec = self.normalize(raw_target_dist)
             
                 diff = self.unit_vector_diff(ee_unit_vec, target_vec)
                 norm_diffs.append(diff)
 
-            agent_pos += norm_diffs
+        # GET ROBOT STATE
+        robot_state = []
+        if self.joint_pos:
+            robot_state += list(state_info['joints']['position'])[:7]
 
-        if self.centroid_only and self.use_norm_diffs:
-            agent_pos = agent_pos[-(3*(self.num_prompts-1)) - ((self.num_prompts-1)-1):]
-        elif self.centroid_only:
-            agent_pos = agent_pos[-(3*(self.num_prompts-1)):]
+        if self.use_gripper:
+            gripper_state = list(state_info['joints']['position'])[7]
+            gripper_state = 1 if gripper_state > 0.3 else -1
+            robot_state += [gripper_state]
+
+        if self.use_ee_position:
+            robot_state += state_info['ee_position']
+
+        if self.use_centroids:
+            robot_state += differences
+
+        if self.use_norm_diffs:
+            robot_state += norm_diffs
+        # GET ROBOT STATE
 
         return agent_pos
 
+    def normalize(self, a, eps=1e-6):
+        mag = np.linalg.norm(a)
+        if mag > eps:
+            a_norm = a / mag
+        else:
+            a_norm = a
+
+        return a_norm
 
     def send_payload_and_publish(self, payload):
         # Send via ZeroMQ
@@ -278,14 +313,18 @@ class RobotInferenceNode:
         return np.linalg.norm(a_unit - b_unit, axis=-1)
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Usage: python record.py <local_server>")
+    if len(sys.argv) != 3:
+        print("Usage: python record.py <model> <local_server>")
         sys.exit(1)
-    if sys.argv[1] not in ["0", "1"]:
+    if sys.argv[2] not in ["0", "1"]:
         print("local_server must be 0 or 1")
         sys.exit(1)
+    if sys.argv[1] not in ["hitl_d", "hitl_hgd"]:
+        print("Model does not exist, must be <hitl_d, hitl_hgd>")
+        sys.exit(1)
+    model = sys.argv[1]
     try:
-        node = RobotInferenceNode(local=0 if sys.argv[1] == "0" else 1)
+        node = RobotInferenceNode(model=model, local=0 if sys.argv[1] == "0" else 1)
         rospy.spin()
     except KeyboardInterrupt:
         rospy.loginfo("Shutting down...")

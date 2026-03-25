@@ -9,7 +9,8 @@ if __name__ == "__main__":
 	server = libtmux.Server(
 		config_file=path.expandvars("/home/user/kinova-diffusion/scripts/.tmux.conf")
 	)
-	dataset_name = sys.argv[1]
+	model = sys.argv[1]
+	dataset_name = sys.argv[2]
 	if server.has_session("sim"):
 		exit()
 	else:
@@ -20,10 +21,10 @@ if __name__ == "__main__":
 		"kortex_bringup": "roslaunch kortex_bringup kortex_bringup.launch", # launch kortex - note that this starts a roscore
 		"main": "sleep 1 && rosrun kortex_bringup record_main.py", 
 		"joy": "rosrun joy joy_node", 
-		"segment": "rosrun kortex_bringup segment.py", 
+		"segment": "rosrun kortex_bringup segment.py" if model == "hitl_hgd" else "echo 'This model does not have segmentation'", 
 		"realsense_back": "sleep 5 && roslaunch realsense2_camera rs_camera.launch camera:=cam filters:=pointcloud depth_width:=640 depth_height:=480 depth_fps:=30 color_width:=640 color_height:=480 color_fps:=30 align_depth:=true decimation_filter:=true spatial_filter:=true temporal_filter:=true hole_filling_filter:=true",
-		"record": f"sleep 1 && rosrun kortex_bringup record.py {dataset_name}",
-		"rviz": "sleep 5 &&rviz -d /home/user/kinova-diffusion/scripts/segment.rviz",
+		"record": f"sleep 1 && rosrun kortex_bringup record.py {model} {dataset_name}",
+		"rviz": "sleep 5 && rviz -d /home/user/kinova-diffusion/scripts/hitl_hgd.rviz" if model == "hitl_hgd" else "sleep 5 && rviz -d /home/user/kinova-diffusion/scripts/hitl_d.rviz",
 	}
 
 	for name, cmd in terminals.items():

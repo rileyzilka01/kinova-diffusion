@@ -27,7 +27,6 @@ def farthest_point_sampling(points, num_points=1024, use_cuda=True):
 def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
     device = torch.device('cuda' if use_cuda and torch.cuda.is_available() else 'cpu')
 
-    # ---- 1. Voxel subsampling (Open3D) ----
     voxelized = False
     points_tensor = None
     if points.shape[0] > 20000:
@@ -71,7 +70,6 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
         assert voxel_xyz.shape[0] >= 1024
         points_tensor = voxel_xyz
 
-    # ---- 2. FPS on voxelized points ----
     if points_tensor is None:
         points_tensor = torch.from_numpy(points).float().to(device)
 
@@ -80,7 +78,6 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
     if color:
         fps_idx = fps_idx.squeeze(0).cpu().numpy()
 
-    # ---- 3. Map back to original indices for RGB/etc ----
     if color:
         if voxelized:
             sampled_indices = voxel_indices[fps_idx]
@@ -90,7 +87,7 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
         return sampled_points, sampled_indices
     return [sampled_points]
 
-def preprocess_point_cloud(points, use_cuda=True, color=True, segment=True):
+def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd"):
     num_points = pc_points
     orientation = False
 
@@ -128,8 +125,8 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, segment=True):
 
     # Crop points by workspace mask in a vectorized manner
     # Dont need to crop if segmentation
-    if not segment:
-        if orientation:
+    if model == "hitl_d":
+        if orientation: # Need to tune this by first recording an episode and then visualizing it and then hand finding a cropped region
             WORK_SPACE = [
                 [-0.4, 0.4],
                 [-1.1, 1],
