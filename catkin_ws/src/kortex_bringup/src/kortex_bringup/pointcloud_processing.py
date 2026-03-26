@@ -135,9 +135,9 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd"):
 
         else:
             WORK_SPACE = [
-                [-0.6, 0.3],
-                [-0.4, 0.5],
-                [0.2, 1]
+                [-0.4, 0.3],
+                [-0.2, 0.4],
+                [-2, 2]
             ]
 
         mask = (

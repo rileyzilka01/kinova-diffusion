@@ -232,6 +232,7 @@ def gen_iris(base):
                 MAXV_GR = 0.3
                 roll = msg.buttons[1] - msg.buttons[3]
                 self.axes_vector = [msg.axes[1], msg.axes[0], (1/(msg.axes[5]+1.1) - 1/(msg.axes[2]+1.1))/10, -msg.axes[4]/2, msg.axes[3], roll]
+                self.axes_vector = [self.axes_vector[i]/2 for i in range(len(self.axes_vector))]
 
                 if msg.buttons[0]:
                     pass

@@ -186,7 +186,7 @@ class RobotInferenceNode:
             # Convert PointCloud2 to numpy array [N, 3]
             start_time = time.time()
 
-            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False, model=self.model)=
+            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False, model=self.model)
             centroid = pointcloud.mean(axis=0)
             pointcloud = pointcloud - centroid
 
@@ -194,7 +194,7 @@ class RobotInferenceNode:
             process_time = end_time - start_time
             rospy.loginfo(f"Processing pointcloud took {process_time:.6f} seconds")
             
-            agent_pos = self.get_state_array(centroids_msg, joint_msg)
+            agent_pos = self.get_state_array(None, joint_msg)
 
             if len(self.pointclouds) != self.n_obs:
                 self.pointclouds.append(pointcloud.astype(np.float16))  # keep as NumPy
@@ -217,9 +217,6 @@ class RobotInferenceNode:
 
 
     def get_state_array(self, centroids_msg, joint_msg):
-        if not self.joint_pos:
-            agent_pos = agent_pos[7:]
-
         differences = []
         if self.use_centroids:
             centroids = list(centroids_msg.data)
@@ -245,15 +242,15 @@ class RobotInferenceNode:
         # GET ROBOT STATE
         robot_state = []
         if self.joint_pos:
-            robot_state += list(state_info['joints']['position'])[:7]
+            robot_state += joint_msg.position[:7]
 
         if self.use_gripper:
-            gripper_state = list(state_info['joints']['position'])[7]
+            gripper_state = joint_msg.position[7]
             gripper_state = 1 if gripper_state > 0.3 else -1
             robot_state += [gripper_state]
 
         if self.use_ee_position:
-            robot_state += state_info['ee_position']
+            robot_state += self.tooldata[:3]
 
         if self.use_centroids:
             robot_state += differences
@@ -262,7 +259,7 @@ class RobotInferenceNode:
             robot_state += norm_diffs
         # GET ROBOT STATE
 
-        return agent_pos
+        return robot_state
 
     def normalize(self, a, eps=1e-6):
         mag = np.linalg.norm(a)
@@ -324,7 +321,7 @@ if __name__ == '__main__':
         sys.exit(1)
     model = sys.argv[1]
     try:
-        node = RobotInferenceNode(model=model, local=0 if sys.argv[1] == "0" else 1)
+        node = RobotInferenceNode(model=model, local=0 if sys.argv[2] == "0" else 1)
         rospy.spin()
     except KeyboardInterrupt:
         rospy.loginfo("Shutting down...")
