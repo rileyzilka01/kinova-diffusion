@@ -105,19 +105,30 @@ class RobotInferenceNode:
 
         # ROS publishers and subscribers
         if self.model == "hitl_hgd":
-            self.pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
+            if self.use_pointcloud:
+                self.pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
             self.centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
 
-        self.depth_sub = message_filters.Subscriber("/cam/depth/color/points", PointCloud2)
+        if self.use_pointcloud:
+            self.depth_sub = message_filters.Subscriber("/cam/depth/color/points", PointCloud2)
+
         self.joint_sub = message_filters.Subscriber("/my_gen3/joint_states", JointState)
         self.tool_sub = rospy.Subscriber("/my_gen3/base_feedback", BaseCyclic_Feedback, self.tool_callback)
 
         if self.model == "hitl_hgd":
-            self.ts = message_filters.ApproximateTimeSynchronizer([self.pc_segment_sub, self.centroids_sub, self.joint_sub], queue_size=5, slop=0.1)
-            self.ts.registerCallback(self.callbackHITLHGD)
+            if self.use_pointcloud:
+                self.ts = message_filters.ApproximateTimeSynchronizer([self.pc_segment_sub, self.centroids_sub, self.joint_sub], queue_size=5, slop=0.1)
+                self.ts.registerCallback(self.callbackHITLHGD)
+            else:
+                self.ts = message_filters.ApproximateTimeSynchronizer([self.centroids_sub, self.joint_sub], queue_size=5, slop=0.1)
+                self.ts.registerCallback(self.callbackHITLHGDnopc)
         else:
-            self.ts = message_filters.ApproximateTimeSynchronizer([self.depth_sub, self.joint_sub], queue_size=5, slop=0.1)
-            self.ts.registerCallback(self.callbackHITLD)
+            if self.use_pointcloud:
+                self.ts = message_filters.ApproximateTimeSynchronizer([self.depth_sub, self.joint_sub], queue_size=5, slop=0.1)
+                self.ts.registerCallback(self.callbackHITLD)
+            else:
+                self.ts = message_filters.ApproximateTimeSynchronizer([self.joint_sub], queue_size=5, slop=0.1)
+                self.ts.registerCallback(self.callbackHITLDnopc)
 
         self.cmd_pub = rospy.Publisher("/my_gen3/inference", Float64MultiArray, queue_size=10)
 
@@ -180,6 +191,26 @@ class RobotInferenceNode:
         except Exception as e:
             rospy.logerr(f"Error in callback: {str(e)}")
 
+    def callbackHITLHGDnopc(self, centroids_msg, joint_msg):
+        try:
+            agent_pos = self.get_state_array(centroids_msg, joint_msg)
+
+            if len(self.states) != self.n_obs:
+                self.states.append(np.array(agent_pos, dtype=np.float16))
+            if len(self.states) == self.n_obs:
+                start_time = time.time()
+                rospy.loginfo("Sending data to server")
+                payload = {
+                    "agent_pos": np.array(self.states, dtype=np.float32),
+                }
+                
+                self.send_payload_and_publish(payload)
+
+                self.states.clear()
+
+        except Exception as e:
+            rospy.logerr(f"Error in callback: {str(e)}")
+
 
     def callbackHITLD(self, pc_msg, joint_msg):
         try:
@@ -216,6 +247,27 @@ class RobotInferenceNode:
             rospy.logerr(f"Error in callback: {str(e)}")
 
 
+    def callbackHITLDnopc(self, joint_msg):
+        try:
+            agent_pos = self.get_state_array(None, joint_msg)
+
+            if len(self.states) != self.n_obs:
+                self.states.append(np.array(agent_pos, dtype=np.float16))
+            if len(self.states) == self.n_obs:
+                start_time = time.time()
+                rospy.loginfo("Sending data to server")
+                payload = {
+                    "agent_pos": np.array(self.states, dtype=np.float32),
+                }
+                
+                self.send_payload_and_publish(payload)
+
+                self.states.clear()
+
+        except Exception as e:
+            rospy.logerr(f"Error in callback: {str(e)}")
+
+
     def get_state_array(self, centroids_msg, joint_msg):
         differences = []
         if self.use_centroids:
@@ -238,6 +290,7 @@ class RobotInferenceNode:
             
                 diff = self.unit_vector_diff(ee_unit_vec, target_vec)
                 norm_diffs.append(diff)
+        print(norm_diffs)
 
         # GET ROBOT STATE
         robot_state = []

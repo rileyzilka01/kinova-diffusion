@@ -301,6 +301,8 @@ def gen_iris(base):
                     ])
                 # rospy.loginfo(f"Resulting velocities: {velocities}")
 
+                velocities /= 2
+
                 self.custom_commands.append(CustomCommand(velocities, 1, 1, 1, 1))
 
         def auto_pos(self):
