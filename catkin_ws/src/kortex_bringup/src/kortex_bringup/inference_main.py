@@ -17,6 +17,9 @@ import sys
 import ros_numpy
 import msgpack
 from pointcloud_processing import preprocess_point_cloud
+from scipy.spatial.transform import Rotation as R
+import torch
+import torch.nn.functional as F
 
 from std_msgs.msg import Int32MultiArray, Float32, Float64MultiArray, Int16
 from kortex_driver.msg._BaseCyclic_Feedback import BaseCyclic_Feedback
@@ -119,15 +122,35 @@ def gen_iris(base):
             self.pc = preprocess_point_cloud(pc_msg, use_cuda=True)
 
         def tool_callback(self, msg):
-            rads = self.ku.get_eef_pose()[3:]
-            self.tooldata = [
-                msg.base.tool_pose_x, 
-                msg.base.tool_pose_y, 
-                msg.base.tool_pose_z, 
-                math.degrees(rads[0]),
-                math.degrees(rads[1]),
-                math.degrees(rads[2]),
-            ]
+            if self.ku.get_eef_pose() is not None:
+                ret = self.ku.get_eef_pose()
+                rads = ret[3:6]
+                quat = ret[6:]
+                self.tooldata = [
+                    msg.base.tool_pose_x, 
+                    msg.base.tool_pose_y, 
+                    msg.base.tool_pose_z, 
+                    rads[0],
+                    rads[1],
+                    rads[2],
+                    quat[0],
+                    quat[1],
+                    quat[2],
+                    quat[3]
+                ]
+            else:
+                self.tooldata = [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ]
 
         def orient_callback(self, msg):
             shape = [dim.size for dim in msg.layout.dim]
@@ -138,7 +161,7 @@ def gen_iris(base):
             # ABSOLUTE
 
             # DIFF
-            # self.old_position = self.tooldata[3:]
+            # self.old_position = self.tooldata[3:6]
             # self.target = self.old_position + self.orientation
             # DIFF
 
@@ -278,32 +301,71 @@ def gen_iris(base):
                 if msg.buttons[10]:
                     pass
 
+        def get_angular_velocity_command(self, action_6d, current_quat_xyzw, P_gain=0.05):
+            """
+            Takes the network's 6D prediction and the robot's current quaternion,
+            and directly outputs the 3D angular velocity command in the TOOL frame.
+            """
+            # ---------------------------------------------------------
+            # 1. Convert Network 6D -> Target Rotation Matrix
+            # ---------------------------------------------------------
+            ortho6d = torch.tensor(action_6d, dtype=torch.float32) if isinstance(action_6d, np.ndarray) else action_6d.clone()
+            v1, v2 = ortho6d[..., :3], ortho6d[..., 3:]
+            
+            u1 = F.normalize(v1, p=2, dim=-1)
+            u2 = F.normalize(v2 - torch.sum(u1 * v2, dim=-1, keepdim=True) * u1, p=2, dim=-1)
+            u3 = torch.cross(u1, u2, dim=-1)
+            
+            target_matrix = torch.stack([u1, u2, u3], dim=-1).detach().cpu().numpy()
+            if target_matrix.ndim == 2:
+                target_matrix = np.expand_dims(target_matrix, axis=0)
+                
+            R_target = R.from_matrix(target_matrix)
+
+            # ---------------------------------------------------------
+            # 2. Get Current Rotation from Quaternion
+            # ---------------------------------------------------------
+            R_current = R.from_quat(current_quat_xyzw)
+
+            # ---------------------------------------------------------
+            # 3. Calculate the True Rotational Error in the TOOL frame
+            # Swapped multiplication order: R_current^-1 * R_target
+            # ---------------------------------------------------------
+            R_error_tool = R_current.inv() * R_target
+
+            # ---------------------------------------------------------
+            # 4. Convert Error directly to Angular Velocity (so3 vector)
+            # as_rotvec() returns a 3D vector [w_x, w_y, w_z] in radians.
+            # ---------------------------------------------------------
+            error_vector_rad = R_error_tool.as_rotvec()[0]
+            # print(error_vector_rad)
+
+            # Proportional Controller
+            threshold = np.radians(0.5)
+            angular_velocity = np.array([
+                np.degrees(P_gain * error_vector_rad[0]) if abs(error_vector_rad[0]) > threshold else 0.0,
+                np.degrees(P_gain * error_vector_rad[1]) if abs(error_vector_rad[1]) > threshold else 0.0,
+                np.degrees(P_gain * error_vector_rad[2]) if abs(error_vector_rad[2]) > threshold else 0.0,
+            ])
+
+            return angular_velocity * 0.5
+
         def get_orientation(self):
             if self.orientation is not None:
-                # rospy.loginfo(f"Target: {self.target}")
-                # rospy.loginfo(f"Current: {self.tooldata[3:]}")
-                diff = [abs(self.target[i] - self.tooldata[3+i]) for i in range(3)]
-                # rospy.loginfo(f"Diff: {diff}")
-                if self.joy_type == 0:
-                    velocities = np.array([
-                        (-1 if diff[2] > 180 else 1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement
-                        (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0), #Correct axes placement
-                        (1 if diff[1] > 180 else -1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0), #Correct axes placement
-                    ])
-                if self.joy_type == 1:
-                    velocities = np.array([
-                        0,
-                        0,
-                        0,
-                        (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0),
-                        (1 if diff[2] > 180 else -1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement,
-                        (-1 if diff[1] > 180 else 1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0),
-                    ])
-                # rospy.loginfo(f"Resulting velocities: {velocities}")
 
-                velocities /= 2
+                wx, wy, wz = self.get_angular_velocity_command(self.target, self.tooldata[6:10])
+                rospy.loginfo(f"Resulting velocities: {[wx, wy, wz]}")
+                velocities = np.array([
+                    0,
+                    0,
+                    0,
+                    wx,
+                    wy,
+                    wz,
+                ])
 
-                self.custom_commands.append(CustomCommand(velocities, 1, 1, 1, 1))
+                if self.infer:
+                    self.custom_commands.append(CustomCommand(velocities, 1, 1, 1, 1))
 
         def auto_pos(self):
             if self.pc is not None:
@@ -378,8 +440,7 @@ def gen_iris(base):
             if self.run:
                 self.custom_commands = []
 
-                if self.infer:
-                    self.get_orientation()
+                self.get_orientation()
                 if self.auto:
                     self.auto_pos()
                 else:

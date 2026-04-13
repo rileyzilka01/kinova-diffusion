@@ -42,7 +42,7 @@ class KinovaUtil:
             [rot.x, rot.y, rot.z, rot.w]
         )
 
-        return np.array([tr.x, tr.y, tr.z, roll, pitch, yaw])
+        return np.array([tr.x, tr.y, tr.z, roll, pitch, yaw, rot.x, rot.y, rot.z, rot.w])
 
     def get_arm_joints(self):
         """Gets the 7 arm joints of the robot, excluding joints related to the robot fingers.

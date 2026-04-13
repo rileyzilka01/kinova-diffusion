@@ -58,12 +58,14 @@ class Recorder(png_control):
         if self.model == "hitl_hgd":
             pc_segment_sub = message_filters.Subscriber('/my_gen3/segment_pc_mask', PointCloud2)
             centroids_sub = message_filters.Subscriber('/my_gen3/pc_centroids', Float32MultiArrayStamped)
+            # seg_sub = message_filters.Subscriber("/my_gen3/segment_mask", Image, queue_size=1)
         
         joints_sub = message_filters.Subscriber('/my_gen3/joint_states', JointState)
         depth_sub = message_filters.Subscriber('/cam/depth/color/points', PointCloud2)
         self.joy_sub = rospy.Subscriber("/joy", Joy, self.joy_callback)
 
         if self.model == "hitl_hgd":
+            # ts = message_filters.ApproximateTimeSynchronizer([joints_sub, pc_segment_sub, centroids_sub, seg_sub], 100, slop=10)
             ts = message_filters.ApproximateTimeSynchronizer([joints_sub, pc_segment_sub, centroids_sub], 100, slop=10)
             ts.registerCallback(self.syncCallbackHITLHGD)
         elif self.model == "hitl_d":
@@ -88,7 +90,9 @@ class Recorder(png_control):
 
     def tool_callback(self, msg):
         if self.ku.get_eef_pose() is not None:
-            rads = self.ku.get_eef_pose()[3:]
+            ret = self.ku.get_eef_pose()
+            rads = ret[3:6]
+            quat = ret[6:]
             self.tooldata = [
                 msg.base.tool_pose_x, 
                 msg.base.tool_pose_y, 
@@ -96,6 +100,10 @@ class Recorder(png_control):
                 rads[0],
                 rads[1],
                 rads[2],
+                quat[0],
+                quat[1],
+                quat[2],
+                quat[3]
             ]
         else:
             self.tooldata = [
@@ -105,8 +113,13 @@ class Recorder(png_control):
                 0,
                 0,
                 0,
+                0,
+                0,
+                0,
+                0,
             ]
 
+    # def syncCallbackHITLHGD(self, joint_msg, depth, centroid_msg, seg):
     def syncCallbackHITLHGD(self, joint_msg, depth, centroid_msg):
         self.last_sync_time = rospy.Time.now()
 
@@ -116,6 +129,7 @@ class Recorder(png_control):
        
         try:
             self.curr_depth.append(depth)
+            # self.curr_img.append(seg)
 
             data = {
                 'joints': {
@@ -123,7 +137,7 @@ class Recorder(png_control):
                     'velocity': joint_msg.velocity,
                 },
                 "ee_position": self.tooldata[:3],
-                "ee_orientation": self.tooldata[3:],
+                "ee_orientation": self.tooldata[6:],
                 "centroids": centroid_msg.data
             }
             
@@ -147,7 +161,7 @@ class Recorder(png_control):
                     'velocity': joint_msg.velocity,
                 },
                 "ee_position": self.tooldata[:3],
-                "ee_orientation": self.tooldata[3:]
+                "ee_orientation": self.tooldata[6:]
             }
             
             self.curr_low_dim.append(data)
@@ -181,6 +195,7 @@ class Recorder(png_control):
         self.last_sync_time = rospy.Time.now()
         self.curr_low_dim = []
         self.curr_depth =  []
+        self.curr_img = []
         self.stage = 1
    
     def handleEpisodeEnd(self):
@@ -197,6 +212,7 @@ class Recorder(png_control):
             frame_folder = os.path.join(current_folder, str(i))
             os.makedirs(frame_folder)
             np.save(os.path.join(frame_folder, "low_dim.npy"), self.curr_low_dim[idx])
+            # np.save(os.path.join(frame_folder, "img.npy"), self.curr_img[idx])
 
             pointcloud = preprocess_point_cloud(self.curr_depth[idx], color=False, model=self.model)
             centroid = pointcloud.mean(axis=0)

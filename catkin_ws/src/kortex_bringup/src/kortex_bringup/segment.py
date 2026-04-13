@@ -45,7 +45,7 @@ class ImageSegmentationNode:
         self.cx = 0
         self.cy = 0
 
-        self.prompts = [["robot arm", "red object"], ["robot arm", "black object"], "yellow object", "plate"]
+        self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "red cup", "green bottle"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
         self.masks = [[None] for prompt in self.prompts]
@@ -118,7 +118,9 @@ class ImageSegmentationNode:
 
         new_centroids.append(ring_centroid)
 
-
+        if len(self.centroids) < 4:
+            for i in range(4 - len(self.centroids)):
+                self.centroids.append(np.array([0, 0, 0]))
 
         # --- 3A — End Effector (prompt 0) ---
         ee_mask = self.masks[1][0]  # guaranteed to exist
