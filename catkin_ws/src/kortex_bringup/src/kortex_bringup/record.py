@@ -137,7 +137,7 @@ class Recorder(png_control):
                     'velocity': joint_msg.velocity,
                 },
                 "ee_position": self.tooldata[:3],
-                "ee_orientation": self.tooldata[6:],
+                "ee_orientation": self.tooldata[6:]
                 "centroids": centroid_msg.data
             }
             
@@ -161,7 +161,7 @@ class Recorder(png_control):
                     'velocity': joint_msg.velocity,
                 },
                 "ee_position": self.tooldata[:3],
-                "ee_orientation": self.tooldata[6:]
+                "ee_orientation": self.tooldata[3:6]
             }
             
             self.curr_low_dim.append(data)

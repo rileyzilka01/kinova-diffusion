@@ -37,9 +37,9 @@ class CustomCommand():
         self.rot_gain = rot_gain
         self.wrist_gain = wrist_gain
 
-def gen_iris(base):
+def gen_iris(base, model):
     class IrisRecord(base):
-        def __init__(self):
+        def __init__(self, model):
             super(IrisRecord, self).__init__(None)
             self.ku = KinovaUtil()
             self.mode = 0 # modes for control
@@ -68,6 +68,7 @@ def gen_iris(base):
             self.trial_time = None
             self.reset_count = 0
             self.mode_switches = 0
+            self.model = model
 
             self.joy_sub = rospy.Subscriber("/joy", Joy, self.joy_callback)
             self.tool_sub = rospy.Subscriber("/my_gen3/base_feedback", BaseCyclic_Feedback, self.tool_callback)
@@ -322,21 +323,14 @@ def gen_iris(base):
                 
             R_target = R.from_matrix(target_matrix)
 
-            # ---------------------------------------------------------
-            # 2. Get Current Rotation from Quaternion
-            # ---------------------------------------------------------
             R_current = R.from_quat(current_quat_xyzw)
 
-            # ---------------------------------------------------------
-            # 3. Calculate the True Rotational Error in the TOOL frame
+            # Calculate the True Rotational Error in the TOOL frame
             # Swapped multiplication order: R_current^-1 * R_target
-            # ---------------------------------------------------------
             R_error_tool = R_current.inv() * R_target
 
-            # ---------------------------------------------------------
-            # 4. Convert Error directly to Angular Velocity (so3 vector)
+            # Convert Error directly to Angular Velocity (so3 vector)
             # as_rotvec() returns a 3D vector [w_x, w_y, w_z] in radians.
-            # ---------------------------------------------------------
             error_vector_rad = R_error_tool.as_rotvec()[0]
             # print(error_vector_rad)
 
@@ -353,16 +347,41 @@ def gen_iris(base):
         def get_orientation(self):
             if self.orientation is not None:
 
-                wx, wy, wz = self.get_angular_velocity_command(self.target, self.tooldata[6:10])
-                rospy.loginfo(f"Resulting velocities: {[wx, wy, wz]}")
-                velocities = np.array([
-                    0,
-                    0,
-                    0,
-                    wx,
-                    wy,
-                    wz,
-                ])
+                if self.model == "hitl_hgd":
+                    wx, wy, wz = self.get_angular_velocity_command(self.target, self.tooldata[6:10])
+                    velocities = np.array([
+                        0,
+                        0,
+                        0,
+                        wx,
+                        wy,
+                        wz,
+                    ])
+
+                else:
+                    # rospy.loginfo(f"Target: {self.target}")
+                    # rospy.loginfo(f"Current: {self.tooldata[3:]}")
+                    diff = [abs(self.target[i] - self.tooldata[3+i]) for i in range(3)]
+                    # rospy.loginfo(f"Diff: {diff}")
+                    if self.joy_type == 0:
+                        velocities = np.array([
+                            (-1 if diff[2] > 180 else 1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement
+                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0), #Correct axes placement
+                            (1 if diff[1] > 180 else -1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0), #Correct axes placement
+                        ])
+                    if self.joy_type == 1:
+                        velocities = np.array([
+                            0,
+                            0,
+                            0,
+                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0),
+                            (1 if diff[2] > 180 else -1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement,
+                            (-1 if diff[1] > 180 else 1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0),
+                        ])
+
+                rospy.loginfo(f"Resulting velocities: {velocities}")
+
+                velocities /= 2
 
                 if self.infer:
                     self.custom_commands.append(CustomCommand(velocities, 1, 1, 1, 1))
@@ -453,11 +472,17 @@ def gen_iris(base):
                         success = self.send_gripper_command(self.gripper_cmd)
                         self.prev_gripper_cmd = self.gripper_cmd
 
-    return IrisRecord()
+    return IrisRecord(model=model)
 
 def main():
+    model = sys.argv[1]
+
+    if model not in ["hitl_d", "hitl_hgd"]:
+        print("Model needs to be <hitl_d, hitl_hgd>")
+        sys.exit(1)
+
     controller = xbox_control# can replace with png_control, cartesian_control or joint_control or xbox_control
-    robot = gen_iris(controller)
+    robot = gen_iris(controller, model)
     
     rate = rospy.Rate(30)
     while not rospy.is_shutdown():

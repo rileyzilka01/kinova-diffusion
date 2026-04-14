@@ -24,7 +24,7 @@ if __name__ == "__main__":
 	# terminals for the simulation to start
 	terminals = {
 		"kortex_bringup": "roslaunch kortex_bringup kortex_bringup.launch", # launch kortex - note that this starts a roscore
-		"main": "sleep 1 && rosrun kortex_bringup inference_main.py", 
+		"main": f"sleep 1 && rosrun kortex_bringup inference_main.py {model}", 
 		"joy": "rosrun joy joy_node", 
 		"segment": "rosrun kortex_bringup segment.py" if model == "hitl_hgd" else "echo 'No segmentation for hitl-d'", 
 		"realsense_back": "sleep 5 && roslaunch realsense2_camera rs_camera.launch camera:=cam filters:=pointcloud depth_width:=640 depth_height:=480 depth_fps:=30 color_width:=640 color_height:=480 color_fps:=30 align_depth:=true decimation_filter:=true spatial_filter:=true temporal_filter:=true hole_filling_filter:=true",

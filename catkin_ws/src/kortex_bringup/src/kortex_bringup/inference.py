@@ -90,7 +90,7 @@ class RobotInferenceNode:
             # AUTO
 
         self.msg = Float64MultiArray()
-        if not self.quat:
+        if self.model == "hitl_d":
             self.msg.layout = MultiArrayLayout(dim=[
                 MultiArrayDimension(label="", size=self.horizon, stride=self.horizon * 3),
                 MultiArrayDimension(label="", size=3, stride=1)
@@ -177,84 +177,6 @@ class RobotInferenceNode:
                 0,
                 0,
             ]
-
-    def six_d_to_euler(self, action_6d):
-        """
-        Takes a 6D action of shape (1, 6) or (Batch, 6) and returns 
-        Euler angles of shape (1, 3) or (Batch, 3) in the same data type.
-        """
-        # 1. Handle Input Type (NumPy vs Tensor)
-        is_numpy = isinstance(action_6d, np.ndarray)
-        if is_numpy:
-            # Convert to tensor for the math operations
-            ortho6d = torch.tensor(action_6d, dtype=torch.float32)
-        else:
-            ortho6d = action_6d.clone().detach()
-
-        # 2. Gram-Schmidt Orthogonalization (6D -> 3x3 Matrix)
-        v1 = ortho6d[..., :3]
-        v2 = ortho6d[..., 3:]
-        
-        u1 = F.normalize(v1, p=2, dim=-1)
-        v2_orthogonal = v2 - torch.sum(u1 * v2, dim=-1, keepdim=True) * u1
-        u2 = F.normalize(v2_orthogonal, p=2, dim=-1)
-        u3 = torch.cross(u1, u2, dim=-1)
-        
-        # Stack into a 3x3 rotation matrix
-        matrix = torch.stack([u1, u2, u3], dim=-1)
-        matrix_np = matrix.detach().cpu().numpy()
-        
-        # Ensure it's 3D for SciPy: (Batch, 3, 3)
-        if matrix_np.ndim == 2:
-            matrix_np = np.expand_dims(matrix_np, axis=0)
-            
-        # 3. Extract Extrinsic XYZ Euler angles (Roll, Pitch, Yaw)
-        rotations = R.from_matrix(matrix_np)
-        # Output shape will naturally be (Batch, 3). For your input, this is (1, 3).
-        euler_angles = rotations.as_euler('xyz', degrees=False) 
-        
-        # 4. Return in the same format it arrived in
-        if is_numpy:
-            return euler_angles
-        else:
-            # Match original tensor device and dtype
-            return torch.tensor(euler_angles, dtype=action_6d.dtype, device=action_6d.device)
-
-    def unwrap_euler_target(self, target_euler):
-        """
-        Forces the target Euler angles to pick the continuous representation 
-        closest to the current Euler angles, preventing sign flips and wrap-arounds.
-        
-        Args:
-            target_euler: shape (1, 3) or (3,), the output from the model (in radians)
-            current_euler: shape (1, 3) or (3,), the current robot state (in radians)
-        Returns:
-            unwrapped_target: The corrected target Euler angles (in radians)
-        """
-        current_euler = np.array([self.tooldata[3:6]])
-
-        target = np.array(target_euler).flatten()
-        current = np.array(current_euler).flatten()
-        
-        unwrapped_target = np.zeros(3)
-        
-        for i in range(3):
-            # Calculate the raw difference
-            diff = target[i] - current[i]
-            
-            # Wrap the difference to be strictly between -pi and pi
-            # This handles the 179 to -179 jumps gracefully
-            diff_wrapped = (diff + np.pi) % (2 * np.pi) - np.pi
-            
-            # The true target without the flip is the current position + the minimal difference
-            unwrapped_target[i] = current[i] + diff_wrapped
-            
-        # Reshape back to (1, 3) if the input was (1, 3)
-        if np.array(target_euler).ndim == 2:
-            return unwrapped_target.reshape(1, 3)
-            
-        return unwrapped_target
-
 
     def callbackHITLHGD(self, pc_msg, centroids_msg, joint_msg):
         try:
@@ -443,15 +365,14 @@ class RobotInferenceNode:
         # DIFF
         # action = result["action"]
         # DIFF
-        # action = self.six_d_to_euler(np.array(action))
-        # action = self.unwrap_euler_target(action)
         rospy.loginfo(f"ACTION: {action}")
-        self.msg.data = [x for row in action for x in row] # publish as 6d
-        # self.msg.data = [float(math.degrees(x)) for row in action for x in row]
+        if self.model == "hitl_hgd":
+            self.msg.data = [x for row in action for x in row] # publish as 6d
+        else:
+            self.msg.data = [float(math.degrees(x)) for row in action for x in row]
         self.cmd_pub.publish(self.msg)
 
         # rospy.loginfo(f"Published action: {action}")
-        rospy.loginfo(f"Published action")
         end_time = time.time()
         sending_time = end_time - start_time
         rospy.loginfo(f"Sending and publishing took {sending_time:.6f} seconds")
