@@ -45,7 +45,8 @@ class ImageSegmentationNode:
         self.cx = 0
         self.cy = 0
 
-        self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "red cup", "green bottle"]
+        # self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "red cup", "green bottle"]
+        self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "tennis ball", "cup"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
         self.masks = [[None] for prompt in self.prompts]
@@ -234,11 +235,18 @@ class ImageSegmentationNode:
             start_seg = time.time()
             # Convert ROS Image -> OpenCV
             cv_img = self.bridge.imgmsg_to_cv2(self.img, "bgr8")
-            img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-            h, w, c = img_rgb.shape
-            img_bytes = img_rgb.tobytes()
+            success, img_encoded = cv2.imencode('.jpg', cv_img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            if not success:
+                raise ValueError("JPEG compression failed")
+            img_bytes = img_encoded.tobytes()
 
-            header = {"height": h, "width": w, "channels": c}
+            # img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            # h, w, c = img_rgb.shape
+            # img_bytes = img_rgb.tobytes()
+
+            h, w = cv_img.shape[:2]
+            # header = {"height": h, "width": w, "channels": c}
+            header = {"height": h, "width": w, "format": "jpg"}
 
             prompts_json = json.dumps({"prompts": self.prompts}).encode("utf-8")
 
@@ -256,30 +264,25 @@ class ImageSegmentationNode:
 
             self.masks = []
 
-            if len(reply_header.keys()) == 0:
-                rospy.loginfo("Reply header length 0")
-                for prompt in self.prompts:
-                    self.masks.append([None])
-
-            for prompt in reply_header.keys():
-                prompt_masks_meta = reply_header[prompt]
+            for prompt in self.prompts:
+                prompt_masks_meta = reply_header.get(str(prompt), [])
 
                 # No masks returned for this prompt
-                if len(prompt_masks_meta) == 0:
+                if not prompt_masks_meta:
                     rospy.loginfo(f"No mask for prompt {prompt}")
                     self.masks.append([None])
                     continue
 
                 prompt_masks = []
-
                 for meta in prompt_masks_meta:
-                    mask_bytes = reply_parts[part_idx]
-                    part_idx += 1  # move to next part for next mask
+                    packed_bytes = reply_parts[part_idx]
+                    part_idx += 1 
 
-                    mask_array = np.frombuffer(mask_bytes, dtype=np.uint8)
-                    mask_array = mask_array.reshape(meta["height"], meta["width"])
+                    packed_array = np.frombuffer(packed_bytes, dtype=np.uint8)
+                    unpacked = np.unpackbits(packed_array)[:h * w]
+                    mask_array = unpacked.reshape(h, w).astype(np.uint8) * 255
 
-                    prompt_masks.append((mask_array * 255).astype(np.uint8))
+                    prompt_masks.append(mask_array)
 
                 self.masks.append(prompt_masks)
            

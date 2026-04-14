@@ -353,8 +353,8 @@ def gen_iris(base, model):
                         0,
                         0,
                         0,
-                        wx,
-                        wy,
+                        wx*2,
+                        wy*2,
                         wz,
                     ])
 
