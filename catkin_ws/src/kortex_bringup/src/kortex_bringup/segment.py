@@ -46,7 +46,7 @@ class ImageSegmentationNode:
         self.cy = 0
 
         # self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "red cup", "green bottle"]
-        self.prompts = [["robot arm", "red tape"], ["robot arm", "black object"], "tennis ball", "cup"]
+        self.prompts = ["red tape", ["robot arm", "black object"], "tennis ball", "cup"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
         self.masks = [[None] for prompt in self.prompts]
@@ -240,12 +240,7 @@ class ImageSegmentationNode:
                 raise ValueError("JPEG compression failed")
             img_bytes = img_encoded.tobytes()
 
-            # img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-            # h, w, c = img_rgb.shape
-            # img_bytes = img_rgb.tobytes()
-
             h, w = cv_img.shape[:2]
-            # header = {"height": h, "width": w, "channels": c}
             header = {"height": h, "width": w, "format": "jpg"}
 
             prompts_json = json.dumps({"prompts": self.prompts}).encode("utf-8")
@@ -265,7 +260,11 @@ class ImageSegmentationNode:
             self.masks = []
 
             for prompt in self.prompts:
-                prompt_masks_meta = reply_header.get(str(prompt), [])
+                # --- FIX: Match the server's key generation logic ---
+                prompt_key = "|".join(prompt) if isinstance(prompt, list) else str(prompt)
+                
+                # Fetch the metadata using the new key format
+                prompt_masks_meta = reply_header.get(prompt_key, [])
 
                 # No masks returned for this prompt
                 if not prompt_masks_meta:
@@ -278,6 +277,7 @@ class ImageSegmentationNode:
                     packed_bytes = reply_parts[part_idx]
                     part_idx += 1 
 
+                    # Unpack bits, slice off any padding, and reshape
                     packed_array = np.frombuffer(packed_bytes, dtype=np.uint8)
                     unpacked = np.unpackbits(packed_array)[:h * w]
                     mask_array = unpacked.reshape(h, w).astype(np.uint8) * 255
