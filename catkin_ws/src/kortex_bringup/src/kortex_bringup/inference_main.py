@@ -20,6 +20,7 @@ from pointcloud_processing import preprocess_point_cloud
 from scipy.spatial.transform import Rotation as R
 import torch
 import torch.nn.functional as F
+import os
 
 from std_msgs.msg import Int32MultiArray, Float32, Float64MultiArray, Int16
 from kortex_driver.msg._BaseCyclic_Feedback import BaseCyclic_Feedback
@@ -37,7 +38,7 @@ class CustomCommand():
         self.rot_gain = rot_gain
         self.wrist_gain = wrist_gain
 
-def gen_iris(base, model):
+def gen_iris(base, model, dataset):
     class IrisRecord(base):
         def __init__(self, model):
             super(IrisRecord, self).__init__(None)
@@ -69,10 +70,29 @@ def gen_iris(base, model):
             self.reset_count = 0
             self.mode_switches = 0
             self.model = model
+            self.timestep = 0
+            self.recorded_data = {}
+            self.trial_number = 1
+            self.recording_data = False
+
+            self.base_path = os.path.join(os.getcwd(), "data/trajectories", dataset)
+            if not os.path.exists(self.base_path):
+                os.makedirs(self.base_path)
+
+            existing = [
+                int(os.path.splitext(name)[0])
+                for name in os.listdir(self.base_path)
+                if os.path.isfile(os.path.join(self.base_path, name))
+                and name.endswith(".json")
+                and os.path.splitext(name)[0].isdigit()
+            ]
+
+            self.trial_number = max(existing) + 1 if existing else 1
 
             self.joy_sub = rospy.Subscriber("/joy", Joy, self.joy_callback)
             self.tool_sub = rospy.Subscriber("/my_gen3/base_feedback", BaseCyclic_Feedback, self.tool_callback)
             self.orient_sub = rospy.Subscriber("/my_gen3/inference", Float64MultiArray, self.orient_callback)
+            self.joint_sub = rospy.Subscriber("/my_gen3/joint_states", JointState, self.joint_callback)
 
             if self.auto:
                 # ZeroMQ setup
@@ -98,7 +118,6 @@ def gen_iris(base, model):
                     sys.exit(1)
 
                 self.cam_sub = rospy.Subscriber("/cam/depth/color/points", PointCloud2, self.pc_callback)
-                self.joint_sub = rospy.Subscriber("/my_gen3/joint_states", JointState, self.joint_callback)
 
                 self.cmd_pub = rospy.Publisher("/my_gen3/inference", Float64MultiArray, queue_size=10)
 
@@ -117,6 +136,7 @@ def gen_iris(base, model):
 
         def joint_callback(self, joint_msg):
             self.agent_pos = list(joint_msg.position[:8])
+            self.gripper_state = self.agent_pos[7]
             self.agent_pos[7] = 1 if self.agent_pos[7] > 0.7 else 0
 
         def pc_callback(self, pc_msg):
@@ -168,6 +188,7 @@ def gen_iris(base, model):
 
         def joy_callback(self, msg):
             self.buttons = msg.buttons
+            self.axes = msg.axes
             
             if self.joy_type == 0:
                 self.axes_vector = msg.axes
@@ -259,13 +280,17 @@ def gen_iris(base, model):
                 self.axes_vector = [self.axes_vector[i]/2 for i in range(len(self.axes_vector))]
 
                 if msg.buttons[0]:
-                    pass
+                    self.recording_data = False
+                    self.recorded_data["success"] = 0
+                    self.recorded_data["time_to_completion"] = time.time() - self.trial_time
 
                 if msg.buttons[1]:
                     pass
 
                 if msg.buttons[2]:
-                    pass
+                    self.recording_data = False
+                    self.recorded_data["success"] = 1
+                    self.recorded_data["time_to_completion"] = time.time() - self.trial_time
                     
                 if msg.buttons[3]:
                     pass
@@ -289,6 +314,22 @@ def gen_iris(base, model):
 
                 if msg.buttons[7]:
                     if time.time() - self.time_last > 0.5:
+                        
+                        if self.infer: #means it was infering and now we end inference
+                            rospy.loginfo(f"Ended Recording for trial number {self.trial_number}")
+                            self.recording = False
+
+                            with open(f"{self.base_path}/{self.trial_number}.json", "w") as f:
+                                json.dump(self.recorded_data, f, indent=4)
+
+                            self.timestep = 0
+                            self.recorded_data = {}
+                            self.trial_number = 1
+                        else: # it was not infering and now we start
+                            rospy.loginfo(f"Started recording {self.trial_number}")
+                            self.trial_time = time.time()
+                            self.recording_data = True
+
                         self.infer = not self.infer
                         rospy.loginfo(f"Inference: {'True' if self.infer else 'False'}")
                         self.time_last = time.time()
@@ -379,7 +420,7 @@ def gen_iris(base, model):
                             (-1 if diff[1] > 180 else 1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0),
                         ])
 
-                rospy.loginfo(f"Resulting velocities: {velocities}")
+                # rospy.loginfo(f"Resulting velocities: {velocities}")
 
                 velocities /= 2
 
@@ -472,21 +513,54 @@ def gen_iris(base, model):
                         success = self.send_gripper_command(self.gripper_cmd)
                         self.prev_gripper_cmd = self.gripper_cmd
 
+        def record_data(self):
+            if self.recording_data:
+                self.recorded_data[self.timestep] = {"robot_data": {}, "human_data": {}}
+                self.recorded_data[self.timestep]["robot_data"] = {
+                    "ee_x": self.tooldata[0],
+                    "ee_y": self.tooldata[1],
+                    "ee_z": self.tooldata[2],
+                    "quatx": self.tooldata[6],
+                    "quaty": self.tooldata[7],
+                    "quatz": self.tooldata[8],
+                    "quatw": self.tooldata[9],
+                    "joint_states": self.agent_pos,
+                    "gripper": self.gripper_state
+                }
+                self.recorded_data[self.timestep]["human_data"] = {
+                    "x": self.axes[0],
+                    "y": self.axes[1],
+                    "z": (1/(self.axes[5]+1.00000000001) - 1/(self.axes[2]+1.00000000001))/10,
+                    "gripper_open": self.buttons[4],
+                    "gripper_close": self.buttons[4]
+                }
+
+                self.timestep += 1
+
     return IrisRecord(model=model)
 
 def main():
     model = sys.argv[1]
+    dataset = sys.argv[2]
 
     if model not in ["hitl_d", "hitl_hgd"]:
         print("Model needs to be <hitl_d, hitl_hgd>")
         sys.exit(1)
 
+    if dataset is None:
+        print("Please enter a dataset: inference_main.py <model> <dataset>")
+        sys.exit(1)
+
     controller = xbox_control# can replace with png_control, cartesian_control or joint_control or xbox_control
-    robot = gen_iris(controller, model)
+    robot = gen_iris(controller, model, dataset)
     
     rate = rospy.Rate(30)
+    step_count = 0
     while not rospy.is_shutdown():
         robot.step()
+        if step_count % 5 == 0:
+            robot.record_data()
+        step_count += 1
         rate.sleep()
 
 
