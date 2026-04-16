@@ -214,7 +214,11 @@ class Recorder(png_control):
             np.save(os.path.join(frame_folder, "low_dim.npy"), self.curr_low_dim[idx])
             # np.save(os.path.join(frame_folder, "img.npy"), self.curr_img[idx])
 
-            pointcloud = preprocess_point_cloud(self.curr_depth[idx], color=False, model=self.model)
+            pointcloud = preprocess_point_cloud(
+                self.curr_depth[idx], 
+                color=False, 
+                model=self.model, 
+                num_points=1024 if self.model == "hitl_hgd" else 2048)
             centroid = pointcloud.mean(axis=0)
             pointcloud = pointcloud - centroid
 

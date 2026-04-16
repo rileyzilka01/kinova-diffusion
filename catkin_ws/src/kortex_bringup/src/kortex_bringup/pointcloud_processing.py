@@ -87,8 +87,7 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
         return sampled_points, sampled_indices
     return [sampled_points]
 
-def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd"):
-    num_points = pc_points
+def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd", num_points=pc_points):
     orientation = False
 
     # Convert ROS pointcloud to numpy structured array once
@@ -135,8 +134,8 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd"):
 
         else:
             WORK_SPACE = [
-                [-0.4, 0.3],
-                [-0.2, 0.4],
+                [-0.4, 0.6],
+                [-0.5, 0.2],
                 [-2, 2]
             ]
 
