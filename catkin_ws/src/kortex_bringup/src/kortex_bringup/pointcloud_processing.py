@@ -24,7 +24,7 @@ def farthest_point_sampling(points, num_points=1024, use_cuda=True):
     # Return numpy arrays: sampled xyz + indices for rgb
     return sampled_points.cpu().numpy(), indices_cpu
 
-def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
+def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False):
     device = torch.device('cuda' if use_cuda and torch.cuda.is_available() else 'cpu')
 
     voxelized = False
@@ -33,39 +33,16 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
         start = time.time()
         voxelized = True
 
-        if color:
-            voxel_down_pcd, voxel_point_indices, inverse_map = pcd.voxel_down_sample_and_trace(
-                voxel_size,
-                min_bound=points[:, :3].min(axis=0),
-                max_bound=points[:, :3].max(axis=0)
-            )
+        points_tensor = torch.from_numpy(points).float().to(device)
+        coords = torch.floor(points_tensor[:, :3] / voxel_size).int()
+        voxel_coords = torch.unique(coords, dim=0)
+        voxel_xyz = voxel_coords.float() * voxel_size + voxel_size / 2
 
-            voxel_xyz = np.asarray(voxel_down_pcd.points)
-
-            while voxel_xyz.shape[0] < 15000:
-                print(voxel_xyz.shape[0])
-                voxel_size *= 0.9
-                voxel_down_pcd, voxel_point_indices, inverse_map = pcd.voxel_down_sample_and_trace(
-                    voxel_size,
-                    min_bound=points[:, :3].min(axis=0),
-                    max_bound=points[:, :3].max(axis=0)
-                )
-
-                voxel_xyz = np.asarray(voxel_down_pcd.points)
-
-            voxel_indices = np.array(list(itertools.chain.from_iterable(voxel_point_indices)))  # indices into original points
-        
-        else:
-            points_tensor = torch.from_numpy(points).float().to(device)
+        while voxel_xyz.shape[0] < 15000:
+            voxel_size *= 0.9
             coords = torch.floor(points_tensor[:, :3] / voxel_size).int()
             voxel_coords = torch.unique(coords, dim=0)
             voxel_xyz = voxel_coords.float() * voxel_size + voxel_size / 2
-
-            while voxel_xyz.shape[0] < 15000:
-                voxel_size *= 0.9
-                coords = torch.floor(points_tensor[:, :3] / voxel_size).int()
-                voxel_coords = torch.unique(coords, dim=0)
-                voxel_xyz = voxel_coords.float() * voxel_size + voxel_size / 2
 
         assert voxel_xyz.shape[0] >= 1024
         points_tensor = voxel_xyz
@@ -75,16 +52,7 @@ def vfps(points, num_points=1024, voxel_size=0.005, use_cuda=False, color=True):
 
     sampled_points, fps_idx = torch3d_ops.sample_farthest_points(points_tensor.unsqueeze(0), K=num_points)
     sampled_points = sampled_points.squeeze(0).cpu().numpy()
-    if color:
-        fps_idx = fps_idx.squeeze(0).cpu().numpy()
 
-    if color:
-        if voxelized:
-            sampled_indices = voxel_indices[fps_idx]
-        else:
-            sampled_indices = fps_idx
-
-        return sampled_points, sampled_indices
     return [sampled_points]
 
 def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd", num_points=pc_points):
@@ -150,16 +118,17 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd", 
 
     if color:
         rgb = rgb[mask]
-
         # Normalize rgb to [0, 1]
         rgb = rgb.astype(np.float32) / 255.0
 
-        # Stack xyz and rgb into one array [N, 6]
-        points_combined = np.hstack([xyz, rgb])
-
     # Run farthest point sampling (using xyz only)
-    sampled = vfps(xyz, num_points=num_points, use_cuda=use_cuda, color=color) # return: (points, indices) if color else (points)
-    points_xyz = sampled[0]
+    if model == "hitl_hgd":
+        sampled = vfps(xyz, num_points=num_points, use_cuda=use_cuda) # return: (points, indices) if color else (points)
+        points_xyz = sampled[0]
+    else:
+        points_xyz, sampled_indices = farthest_point_sampling(xyz, num_points=num_points)
+        if color:
+            sampled_rgb = rgb[sampled_indices]
 
     # Adjust offsets if orientation enabled
     if orientation:

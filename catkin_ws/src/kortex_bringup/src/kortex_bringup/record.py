@@ -216,7 +216,7 @@ class Recorder(png_control):
 
             pointcloud = preprocess_point_cloud(
                 self.curr_depth[idx], 
-                color=False, 
+                color=False if self.model == "hitl_hgd" else True, 
                 model=self.model, 
                 num_points=1024 if self.model == "hitl_hgd" else 2048)
             centroid = pointcloud.mean(axis=0)
