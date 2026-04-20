@@ -45,7 +45,8 @@ class ImageSegmentationNode:
         self.cx = 0
         self.cy = 0
 
-        self.prompts = ["red tape", ["robot arm", "black object"], "red cup", "green bottle"]
+        # self.prompts = ["red tape", ["robot arm", "black object"], "red cup", "green bottle"]
+        self.prompts = ["red tape", ["robot arm", "black object"], "green pot", "spoon", "white bowl"]
         # self.prompts = ["red tape", ["robot arm", "black object"], "tennis ball", "cup"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]

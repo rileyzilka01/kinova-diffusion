@@ -324,7 +324,7 @@ def gen_iris(base, model, dataset):
 
                             self.timestep = 0
                             self.recorded_data = {}
-                            self.trial_number = 1
+                            self.trial_number += 1
                         else: # it was not infering and now we start
                             rospy.loginfo(f"Started recording {self.trial_number}")
                             self.trial_time = time.time()

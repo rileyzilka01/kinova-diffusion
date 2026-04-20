@@ -238,7 +238,12 @@ class RobotInferenceNode:
             # Convert PointCloud2 to numpy array [N, 3]
             start_time = time.time()
 
-            pointcloud = preprocess_point_cloud(pc_msg, use_cuda=True, color=False, model=self.model)
+            pointcloud = preprocess_point_cloud(
+                pc_msg, 
+                use_cuda=True, 
+                color=False if self.model == "hitl_hgd" else True, 
+                model=self.model,
+                num_points=1024 if self.model == "hitl_hgd" else 2048)
             centroid = pointcloud.mean(axis=0)
             pointcloud = pointcloud - centroid
 

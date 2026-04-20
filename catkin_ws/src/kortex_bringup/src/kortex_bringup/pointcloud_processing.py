@@ -102,7 +102,7 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd", 
 
         else:
             WORK_SPACE = [
-                [-0.4, 0.6],
+                [-0.5, 0.6],
                 [-0.5, 0.2],
                 [-2, 2]
             ]
@@ -133,9 +133,6 @@ def preprocess_point_cloud(points, use_cuda=True, color=True, model="hitl_hgd", 
     # Adjust offsets if orientation enabled
     if orientation:
         points_xyz[..., :3] -= [-0.04489961, -0.6327338, -0.34466678]
-    
-    if color:
-        sampled_rgb = rgb[sampled[1]]
 
     # Combine sampled XYZ and RGB for final result
     if color:
