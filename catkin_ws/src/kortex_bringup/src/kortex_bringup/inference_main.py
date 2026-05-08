@@ -277,11 +277,11 @@ def gen_iris(base, model, dataset):
                 MAXV_GR = 0.3
                 roll = msg.buttons[1] - msg.buttons[3]
                 self.axes_vector = [msg.axes[1], msg.axes[0], (1/(msg.axes[5]+1.1) - 1/(msg.axes[2]+1.1))/10, -msg.axes[4]/2, msg.axes[3], roll]
-                self.axes_vector = [self.axes_vector[i]/2 for i in range(len(self.axes_vector))]
+                self.axes_vector = [self.axes_vector[i]/0.75 for i in range(len(self.axes_vector))]
 
                 if msg.buttons[0]:
                     self.recording_data = False
-                    self.recorded_data["success"] = 0
+                    self.recorded_data["success"] = 1
                     self.recorded_data["time_to_completion"] = time.time() - self.trial_time
 
                 if msg.buttons[1]:
@@ -289,7 +289,7 @@ def gen_iris(base, model, dataset):
 
                 if msg.buttons[2]:
                     self.recording_data = False
-                    self.recorded_data["success"] = 1
+                    self.recorded_data["success"] = 0
                     self.recorded_data["time_to_completion"] = time.time() - self.trial_time
                     
                 if msg.buttons[3]:
@@ -398,26 +398,28 @@ def gen_iris(base, model, dataset):
                         wy*2,
                         wz,
                     ])
+                    velocities /= 2
 
                 else:
+                    data_copy = [math.degrees(i) for i in self.tooldata[3:6]]
                     # rospy.loginfo(f"Target: {self.target}")
-                    # rospy.loginfo(f"Current: {self.tooldata[3:]}")
-                    diff = [abs(self.target[i] - self.tooldata[3+i]) for i in range(3)]
+                    # rospy.loginfo(f"Current: {data_copy}")
+                    diff = [abs(self.target[i] - data_copy[i]) for i in range(3)]
                     # rospy.loginfo(f"Diff: {diff}")
                     if self.joy_type == 0:
                         velocities = np.array([
-                            (-1 if diff[2] > 180 else 1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement
-                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0), #Correct axes placement
-                            (1 if diff[1] > 180 else -1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0), #Correct axes placement
+                            (-1 if diff[2] > 180 else 1)*0.05 * ((self.target[2] - data_copy[2]) if abs(self.target[2] - data_copy[2]) > 0.5 else 0), #Correct axes placement
+                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - data_copy[0]) if abs(self.target[0] - data_copy[0]) > 0.5 else 0), #Correct axes placement
+                            (1 if diff[1] > 180 else -1)*0.05 * ((self.target[1] - data_copy[1]) if abs(self.target[1] - data_copy[1]) > 0.5 else 0), #Correct axes placement
                         ])
                     if self.joy_type == 1:
                         velocities = np.array([
                             0,
                             0,
                             0,
-                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - self.tooldata[3]) if abs(self.target[0] - self.tooldata[3]) > 0.5 else 0),
-                            (1 if diff[2] > 180 else -1)*0.05 * ((self.target[2] - self.tooldata[5]) if abs(self.target[2] - self.tooldata[5]) > 0.5 else 0), #Correct axes placement,
-                            (-1 if diff[1] > 180 else 1)*0.05 * ((self.target[1] - self.tooldata[4]) if abs(self.target[1] - self.tooldata[4]) > 0.5 else 0),
+                            (-1 if diff[0] > 180 else 1)*0.05 * ((self.target[0] - data_copy[0]) if abs(self.target[0] - data_copy[0]) > 0.5 else 0),
+                            (1 if diff[2] > 180 else -1)*0.05 * ((self.target[2] - data_copy[2]) if abs(self.target[2] - data_copy[2]) > 0.5 else 0), #Correct axes placement,
+                            (-1 if diff[1] > 180 else 1)*0.05 * ((self.target[1] - data_copy[1]) if abs(self.target[1] - data_copy[1]) > 0.5 else 0),
                         ])
 
                 # rospy.loginfo(f"Resulting velocities: {velocities}")
@@ -558,7 +560,7 @@ def main():
     step_count = 0
     while not rospy.is_shutdown():
         robot.step()
-        if step_count % 5 == 0:
+        if step_count % 3 == 0:
             robot.record_data()
         step_count += 1
         rate.sleep()

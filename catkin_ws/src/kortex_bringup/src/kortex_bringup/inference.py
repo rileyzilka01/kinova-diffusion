@@ -298,8 +298,8 @@ class RobotInferenceNode:
         differences = []
         if self.use_centroids:
             centroids = list(centroids_msg.data)
-            if len(centroids) == 0:
-                centroids = [0] * 3 * self.num_prompts
+            if len(centroids) < (3*self.num_prompts):
+                centroids += [0] * ((3*self.num_prompts)-len(centroids))
             
             for i in range(1, self.num_prompts): #skip the red ring
                 for j in range(i+1, self.num_prompts):
@@ -381,6 +381,7 @@ class RobotInferenceNode:
         end_time = time.time()
         sending_time = end_time - start_time
         rospy.loginfo(f"Sending and publishing took {sending_time:.6f} seconds")
+        time.sleep(0.4)
 
     def unit_vector_diff(self, a, b, eps=1e-8):
         # Normalize to unit vectors

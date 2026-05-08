@@ -45,9 +45,19 @@ class ImageSegmentationNode:
         self.cx = 0
         self.cy = 0
 
+        # Success over number of demos
         # self.prompts = ["red tape", ["robot arm", "black object"], "red cup", "green bottle"]
-        self.prompts = ["red tape", ["robot arm", "black object"], "green pot", "spoon", "white bowl"]
-        # self.prompts = ["red tape", ["robot arm", "black object"], "tennis ball", "cup"]
+        # self.prompts = ["red tape", ["robot arm", "black object"], "green pot", "spoon", "white bowl"]
+        # self.prompts = ["red tape", ["robot arm", "black object"], "can", "cardboard box"]
+
+        # Pick n place generalization
+        # self.prompts = ["red tape", ["robot arm", "black object"], "yellow ball", "cup"]
+        # self.prompts = ["red tape", ["robot arm", "black object"], "apple", "basket"]
+        # self.prompts = ["red tape", ["robot arm", "black object"], "roll of tape", "cardboard box"]
+        self.prompts = ["red tape", ["robot arm", "black object"], "screwdriver", "gray cylinder"]
+
+        # Camera invariance
+        # self.prompts = ["red tape", ["robot arm", "black object"], "orange object", "green object"]
 
         self.centroids = [np.array([0, 0, 0]) for prompt in self.prompts]
         self.masks = [[None] for prompt in self.prompts]
